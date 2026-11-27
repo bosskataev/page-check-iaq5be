@@ -938,18 +938,20 @@ function goReport() {
 function navNodes(n, uiFn) {
   const warnEl = h('div', { class: 'warn', 'aria-live': 'polite' });
   warnEl.hidden = true;
-  let warned = false;
+  // Набор причин последнего показанного на этом шаге предупреждения (раздел 9, пункт 14; Д-22):
+  // повторное «Дальше» ведёт дальше, если набор тот же; если изменился — предупреждение снова.
+  let lastShown = null;
   function next() {
-    if (!warned) {
-      const reasons = L.nextWarnings(state, n, uiFn ? uiFn() : {});
-      if (reasons.length) {
-        warned = true;
-        mark(n, 'предупреждение перед «Дальше»: ' + reasons.join(','), 'событие');
-        fill(warnEl, reasons.map(function (r) { return p(T[r], 'error'); }).concat([p(T[299])]));
-        warnEl.hidden = false;
-        try { warnEl.scrollIntoView({ block: 'center' }); } catch (e) { /* нет */ }
-        return;
-      }
+    const ui = uiFn ? uiFn() : {};
+    const set = L.nextWarningSet(state, n, ui);
+    if (L.warnAgain(lastShown, set)) {
+      const reasons = L.nextWarnings(state, n, ui);
+      lastShown = set;
+      mark(n, 'предупреждение перед «Дальше»: ' + reasons.join(','), 'событие');
+      fill(warnEl, reasons.map(function (r) { return p(T[r], 'error'); }).concat([p(T[299])]));
+      warnEl.hidden = false;
+      try { warnEl.scrollIntoView({ block: 'center' }); } catch (e) { /* нет */ }
+      return;
     }
     goNext(n, 'done');
   }
@@ -1741,17 +1743,20 @@ function fileItem(n, item, kind, buttonText) {
 
   function onFile(file) {
     if (!kindOk(file, kind === 'video' ? 'video/' : 'image/')) {
-      // Файл не того вида полученным не считается: прежний файл и ответы о нём остаются.
+      // Файл не того вида полученным не считается: прежний файл и ответы о нём остаются;
+      // если файла нужного вида нет, снимок не проверен (7.1, правило 4; Д-21 (г)).
+      L.wrongKindFile(item);
+      save();
       fill(msg, [p(T[kind === 'video' ? 142 : 143], 'error')]);
       return;
     }
     fill(msg, []);
     mark(n, kind === 'video' ? 'видео получено' : 'фото получено', 'событие');
     if (cur) { dropMedia(cur.el); dropUrl(cur.url); cur = null; }
-    // Новый файл стирает прежний и ответы о нём; О16 и О17 остаются (раздел 9, пункты 19 и 20).
-    item.file = {};
-    item.o22 = null;
-    if (kind === 'video') { item.o13s = null; item.o13p = null; item.o13e = null; } else { item.o11 = null; }
+    // Новый файл стирает прежний и ответы о нём; О16 и О17 остаются, кроме ответа
+    // «сам ничего не снял (не выбрал)» — его файл стирает (раздел 9, пункты 19 и 20; Д-21, Д-28).
+    L.goodFile(item, n, kind);
+    renderAsk();
     fill(o22El, []);
     if (kind === 'video') {
       const r = videoFromFile(file, item.file, area, false);
@@ -1768,21 +1773,32 @@ function fileItem(n, item, kind, buttonText) {
   }
 
   function onCancel() {
+    // Нажатие кончилось без файла — признак «последним получен файл не того вида» снимается (7.1, правило 4).
+    L.noFileReturned(item);
+    save();
     // TXT-CAP-136 — только на шаге 9 и только если у этой кнопки файла ещё нет.
     if (n === 9 && !item.file) fill(msg, [p(T[136], 'error')]);
   }
 
   const input = picker(kind === 'video' ? 'video/*' : 'image/*', n === 9, onFile, onCancel);
 
+  // Вопрос, что открылось: О16 (шаг 9) или О17 (шаг 10). Вариант «сам ничего не снял (не выбрал)»
+  // показывается, только пока у кнопки нет файла нужного вида (Д-28).
+  function renderAsk() {
+    if (n === 9 ? !item.asked16 : !item.asked17) return;
+    if (n === 9) {
+      fill(askEl, [choice(T[130], options(L.o16Options(item)), function () { return item.o16; }, function (x) { item.o16 = x; }, renderO22)]);
+    } else {
+      const extra = L.o17Extra(item);
+      const opts = splitOptions(39).concat(extra ? options([extra]) : []);
+      fill(askEl, [choice(T[141], opts, function () { return item.o17; }, function (x) { item.o17 = x; })]);
+    }
+  }
+
   function ask() {
     if (askEl.firstChild) return;
-    if (n === 9) {
-      item.asked16 = true;
-      fill(askEl, [choice(T[130], options([131, 132, 133, 134]), function () { return item.o16; }, function (x) { item.o16 = x; }, renderO22)]);
-    } else {
-      item.asked17 = true;
-      fill(askEl, [yesNo(T[141], item, 'o17')]);
-    }
+    if (n === 9) item.asked16 = true; else item.asked17 = true;
+    renderAsk();
     save();
   }
 

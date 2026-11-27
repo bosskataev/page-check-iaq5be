@@ -198,9 +198,12 @@ export const T = {
   132: 'Галерея', // TXT-CAP-132
   133: 'Ничего', // TXT-CAP-133
   134: 'Другое', // TXT-CAP-134
+  362: 'Открылось, но я сам ничего не снял и не выбрал', // TXT-CAP-362
   135: '{формат} · {N} с по файлу · {N} МБ · 90 секунд такого видео заняли бы около {N} МБ при пределе 200 МБ', // TXT-CAP-135
   136: 'Снимок не добавился на страницу. Это записано в отчёт.', // TXT-CAP-136
   305: 'Для одной из кнопок этого шага нет ни снимка, ни ответа, что открылось.', // TXT-CAP-305
+  365: 'Для одной из кнопок этого шага снимка нет: вы сами ничего не сняли или не выбрали. Нажмите эту кнопку ещё раз.', // TXT-CAP-365
+  366: 'Для одной из кнопок этого шага выбран файл не того вида, и снимка нет. Нажмите эту кнопку ещё раз и выберите нужный файл.', // TXT-CAP-366
   360: 'Вы ответили, что выбрали не то. Нажмите ту же кнопку ещё раз и выберите то, что сняли для этой проверки приложением «Камера».', // TXT-CAP-360
 
   // Шаг 10. Галерея
@@ -209,6 +212,7 @@ export const T = {
   139: 'Выбрать фото из галереи', // TXT-CAP-139
   140: 'Выбрать видео из галереи', // TXT-CAP-140
   141: 'Галерея открылась?', // TXT-CAP-141
+  363: 'Открылась, но я сам ничего не выбрал', // TXT-CAP-363
   180: 'Вы выбрали то, что сняли для этой проверки приложением «Камера» на этом телефоне?', // TXT-CAP-180
   347: 'Подойдут и фото и видео, снятые на этом телефоне перед прошлым запуском проверки, если вы с тех пор не меняли настройки камеры. Если выбрали не то — нажмите ту же кнопку и выберите заново.', // TXT-CAP-347
   348: 'Вы ответили, что выбрали в галерее не то. Нажмите «Выбрать фото из галереи» или «Выбрать видео из галереи» и выберите то, что сняли для этой проверки.', // TXT-CAP-348
@@ -294,6 +298,7 @@ export const T = {
   342: 'от нажатия «Начать запись» — браузер не сообщил о начале записи', // TXT-CAP-342
   345: 'нет ответа', // TXT-CAP-345
   349: 'в галерее выбран не тот файл', // TXT-CAP-349
+  364: 'выбран файл не того вида', // TXT-CAP-364
   359: 'камера не включилась из-за запрета доступа, позже включилась', // TXT-CAP-359
   354: 'удалась', // TXT-CAP-354
   355: 'отклонена: {название ошибки}', // TXT-CAP-355
@@ -401,7 +406,12 @@ const V_NOT_DELIBERATE = 'нет — запуск по ссылке из чат�
 const V_PERM_CAMERA = 'камера — '; // TXT-CAP-242
 const V_PERM_MIC = 'микрофон — '; // TXT-CAP-242
 const V_ND = 'да, длительность по файлу не проверена'; // TXT-CAP-287
+// Снимки шагов 9 и 10 в поле TXT-CAP-327 (Д-26): «шаг 9, видео: {причина}» и т. д.
+const V_SHOT = { video: 'видео', photo: 'фото' }; // TXT-CAP-327
 export const REPORT_VALUE_SOURCES = [
+  [327, 'шаг 9, ' + V_SHOT.video + ': '], [327, 'шаг 9, ' + V_SHOT.photo + ': '],
+  [327, 'шаг 10, ' + V_SHOT.photo + ': '], [327, 'шаг 10, ' + V_SHOT.video + ': '],
+  [259, 'открылась, но я сам ничего не выбрал'],
   [225, V_OPENED.browser], [225, V_OPENED.telegram], [225, V_OPENED.max],
   [226, 'внутри Telegram или MAX'], [226, 'в отдельном браузере'], [226, 'не знаю'], [226, DASH],
   [227, '(Telegram)'], [227, '(MAX)'],
@@ -812,10 +822,12 @@ export function newState() {
   for (let n = 7; n <= 8; n++) {
     Object.assign(steps[n], { onReturnRec: null, onReturnCam: null, o14: null, asked14: false, o15: null });
   }
-  steps[9].v = { file: null, o16: null, asked16: false, o13s: null, o13p: null, o13e: null, o22: null };
-  steps[9].p = { file: null, o16: null, asked16: false, o11: null, o22: null };
-  steps[10].p = { file: null, o17: null, asked17: false, o22: null, o11: null };
-  steps[10].v = { file: null, o17: null, asked17: false, o22: null, o13s: null, o13p: null, o13e: null };
+  // wrongKind — последним у этой кнопки получен файл не того вида, и после этого не было
+  // нажатия, которое кончилось без файла (7.1, правило 4; Д-21 (г)).
+  steps[9].v = { file: null, o16: null, asked16: false, o13s: null, o13p: null, o13e: null, o22: null, wrongKind: false };
+  steps[9].p = { file: null, o16: null, asked16: false, o11: null, o22: null, wrongKind: false };
+  steps[10].p = { file: null, o17: null, asked17: false, o22: null, o11: null, wrongKind: false };
+  steps[10].v = { file: null, o17: null, asked17: false, o22: null, o13s: null, o13p: null, o13e: null, wrongKind: false };
   return {
     version: STATE_VERSION,
     screen: 'start',
@@ -897,7 +909,12 @@ const INVISIBLE = T[73].split(' / ').slice(1).map(lowerFirst);
 
 function rBad() { return { state: BAD, reason: null, best: BAD }; }
 function rOk(state) { return { state: state, reason: null, best: state }; }
-function rNc(reason, best) { return { state: NC, reason: reason, best: best || GOOD }; }
+// q — решающие вопросы без ответа при причине «нет ответа на вопрос» (для набора причин, Д-22).
+function rNc(reason, best, q) { return { state: NC, reason: reason, best: best || GOOD, q: q || [] }; }
+
+function missing(obj, keys) {
+  return keys.filter(function (k) { return obj[k] !== YES && obj[k] !== NO; });
+}
 
 function skippedOrNotReached(st) {
   if (st.status === 'skipped') return rNc(333);
@@ -918,7 +935,7 @@ function step2State(s) {
   const sk = skippedOrNotReached(st);
   if (sk) return sk;
   if (st.o9 === YES) return rOk(GOOD);
-  return rNc(336);
+  return rNc(336, null, ['o9']);
 }
 
 // Правила 2, 1, 3 для снимка на странице (шаги 3, 5, 6) — в этом порядке.
@@ -950,7 +967,7 @@ function pagePhotoState(s, step2) {
   const f = st.file;
   if (!f || f.received !== YES || !withinPhotoLimit(f.bytes)) return rBad();
   if (st.o11 === NO) return rBad();
-  if (st.o11 !== YES) return rNc(336);
+  if (st.o11 !== YES) return rNc(336, null, ['o11']);
   return withStep2(rOk(GOOD), step2);
 }
 
@@ -977,11 +994,11 @@ function pageVideoState(s, n, step2, live) {
   if (st.hiddenCount > 0 && v1235 && !vOther) {
     if (o23Self(st.o23)) return rNc(338);
     if (o23Real(st.o23)) return rBad();
-    return rNc(336);
+    return rNc(336, null, ['o23']);
   }
   if (v1235 || vOther) return rBad();
   const own = c3 === 'unchecked' ? GOODND : GOOD;
-  if (st.o13s !== YES || st.o13p !== YES || st.o13e !== YES) return rNc(336, own);
+  if (st.o13s !== YES || st.o13p !== YES || st.o13e !== YES) return rNc(336, own, missing(st, ['o13s', 'o13p', 'o13e']));
   return withStep2(rOk(own), step2);
 }
 
@@ -993,26 +1010,32 @@ function fileShotState(s, n, item, kind, live) {
   if (st.crashed) return rBad();
   const f = item.file;
   if (!f) {
-    // Правило 4: файл не получен — ответ, что открылось, решает; без ответа — не проверен.
+    // Правило 4: файл нужного вида не получен. Последним получен файл не того вида — не проверен,
+    // что бы ни ответил владелец (Д-21 (г), Д-29). Иначе решает ответ, что открылось:
+    // «сам ничего не снял (не выбрал)» — не проверен, «действие не сделано» (Д-21 (б));
+    // без ответа — не проверен; прочие ответы — не годен (Д-21 (в)).
+    if (item.wrongKind) return rNc(364);
     const a = n === 9 ? item.o16 : item.o17;
-    return a === null || a === undefined ? rNc(340) : rBad();
+    if (a === null || a === undefined) return rNc(340);
+    if (a === ans(n === 9 ? 362 : 363)) return rNc(335);
+    return rBad();
   }
   // Правило 5: только файл в зачёте судят правила 6–8.
   if (n === 9) {
-    if (item.o16 === null || item.o16 === undefined) return rNc(336);
+    if (!o16Given(item)) return rNc(336, null, ['o16']);
     if (item.o16 !== ans(131)) {
       if (item.o22 === NO) return rNc(349);
-      if (item.o22 !== YES) return rNc(336);
+      if (item.o22 !== YES) return rNc(336, null, ['o22']);
     }
   } else {
     if (item.o22 === NO) return rNc(349);
-    if (item.o22 !== YES) return rNc(336);
+    if (item.o22 !== YES) return rNc(336, null, ['o22']);
   }
   if (f.received !== YES) return rBad();
   if (kind === 'photo') {
     if (!withinPhotoLimit(f.bytes)) return rBad();
     if (item.o11 === NO) return rBad();
-    if (item.o11 !== YES) return rNc(336);
+    if (item.o11 !== YES) return rNc(336, null, ['o11']);
     return rOk(GOOD);
   }
   if (!withinVideoLimit(f.bytes)) return rBad();
@@ -1022,8 +1045,46 @@ function fileShotState(s, n, item, kind, live) {
   else if (!(live && (f.durationMethod === null || f.durationMethod === undefined))) return rBad();
   if (item.o13s === NO || item.o13p === NO || item.o13e === NO) return rBad();
   const own = r90 ? R90 : GOOD;
-  if (item.o13s !== YES || item.o13p !== YES || item.o13e !== YES) return rNc(336, own);
+  if (item.o13s !== YES || item.o13p !== YES || item.o13e !== YES) return rNc(336, own, missing(item, ['o13s', 'o13p', 'o13e']));
   return rOk(own);
+}
+
+// Ответ О16 при полученном файле. «Сам ничего не снял и не выбрал» говорит только о случае без файла:
+// файл нужного вида его стирает (раздел 9, пункт 20); если он всё же остался — ответа нет.
+function o16Given(item) {
+  return item.o16 !== null && item.o16 !== undefined && item.o16 !== ans(362);
+}
+
+// Кнопка шага 9 или 10: что меняется, когда выбор вернулся (раздел 9, пункты 19 и 20; 7.1, правило 4).
+// Файл не того вида полученным не считается; прежний файл и ответы о нём остаются.
+export function wrongKindFile(item) {
+  item.wrongKind = true;
+}
+
+// Нажатие кончилось без файла (отмена, на шаге 9 — показ TXT-CAP-136): признак снимается.
+export function noFileReturned(item) {
+  item.wrongKind = false;
+}
+
+// Файл нужного вида, первый или новый: прежний файл и ответы о нём стираются; ответ
+// «сам ничего не снял (не выбрал)» тоже стирается; прочие ответы О16 и О17 остаются.
+export function goodFile(item, n, kind) {
+  item.wrongKind = false;
+  item.file = {};
+  item.o22 = null;
+  if (kind === 'video') { item.o13s = null; item.o13p = null; item.o13e = null; } else { item.o11 = null; }
+  if (n === 9 && item.o16 === ans(362)) item.o16 = null;
+  if (n === 10 && item.o17 === ans(363)) item.o17 = null;
+}
+
+// Варианты ответа О16 (номера текстов): TXT-CAP-362 — только пока у кнопки нет файла нужного вида (Д-28).
+export function o16Options(item) {
+  return item.file ? [131, 132, 133, 134] : [131, 132, 133, 134, 362];
+}
+
+// Третий вариант ответа О17 после «Да» и «Нет»: TXT-CAP-363 — только пока у кнопки нет файла (Д-28).
+export function o17Extra(item) {
+  return item.file ? null : 363;
 }
 
 // opts.live — годность «по тому, что известно в момент нажатия»: длительность, которая ещё измеряется,
@@ -1113,7 +1174,8 @@ export function computeOutcome(s) {
 }
 
 // Поле «Не проверено (переделать при повторе):» (TXT-CAP-327) — только при «Неполном».
-const REASON_ORDER = [333, 334, 359, 335, 340, 349, 337, 338, 336];
+// Порядок причин (7.1, «Шаг не проверен»): «выбран файл не того вида» — раньше «действие не сделано» (Д-29).
+const REASON_ORDER = [333, 334, 359, 364, 335, 340, 349, 337, 338, 336];
 
 function firstReason(list) {
   let best = null;
@@ -1130,13 +1192,15 @@ export function notCheckedField(s, d) {
   const st = d.states || shotStates(s);
   const parts = [];
   if (d.incomplete === 'b') parts.push('шаг 1: ' + T[339]);
+  // У шагов 9 и 10 — по причине отдельно на видео и на фото, в порядке блоков отчёта (Д-26).
   const bySteps = [
-    [2, [st.step2]], [3, [st.photoPage]], [5, [st.v60]], [6, [st.v90]],
-    [9, [st.phoneVideo, st.phonePhoto]], [10, [st.galleryPhoto, st.galleryVideo]]
+    ['шаг 2', [st.step2]], ['шаг 3', [st.photoPage]], ['шаг 5', [st.v60]], ['шаг 6', [st.v90]],
+    ['шаг 9, ' + V_SHOT.video, [st.phoneVideo]], ['шаг 9, ' + V_SHOT.photo, [st.phonePhoto]],
+    ['шаг 10, ' + V_SHOT.photo, [st.galleryPhoto]], ['шаг 10, ' + V_SHOT.video, [st.galleryVideo]]
   ];
   bySteps.forEach(function (x) {
     const r = firstReason(x[1]);
-    if (r !== null) parts.push('шаг ' + x[0] + ': ' + T[r]);
+    if (r !== null) parts.push(x[0] + ': ' + T[r]);
   });
   return parts.length ? parts.join('; ') : DASH;
 }
@@ -1147,38 +1211,70 @@ export function notCheckedField(s, d) {
 // 'nopic' (318 или 344) или нет; ui.errorName; ui.o5Here — на шаге показан вопрос О5;
 // ui.recordingNow — запись ещё идёт.
 // ---------------------------------------------------------------------------
-const WARN = { 335: null, 336: 300, 337: 303, 338: 304, 340: 305 };
+const WARN = { 336: 300, 337: 303, 338: 304, 340: 305, 364: 366 };
 
-export function nextWarnings(s, n, ui) {
+// Причины предупреждения: строка-причина вместе с тем, к чему она относится, — снимок шага
+// (step2, photo, video), а у TXT-CAP-300 — ещё и вопрос без ответа (раздел 9, пункт 14; Д-22).
+function warnItems(s, n, ui) {
   ui = ui || {};
   const out = [];
-  function add(x) { if (x && out.indexOf(x) < 0) out.push(x); }
+  function add(line, shot, q) { if (line) out.push({ line: line, shot: shot || '', q: q || '' }); }
   const noAccess = accessSteps(s).length === 0;
   const st = s.steps[n];
   if (n === 1) {
-    if (st.first && !st.granted && (s.o5 === null || s.o5 === undefined)) add(300);
+    if (st.first && !st.granted && (s.o5 === null || s.o5 === undefined)) add(300, 'access', 'o5');
     return out;
   }
-  if (n >= 2 && n <= 8 && ui.o5Here && noAccess && (s.o5 === null || s.o5 === undefined)) add(300);
+  if (n >= 2 && n <= 8 && ui.o5Here && noAccess && (s.o5 === null || s.o5 === undefined)) add(300, 'access', 'o5');
   if ([2, 3, 5, 6, 9, 10].indexOf(n) < 0) return out;
   if (n >= 2 && n <= 8 && ui.message && !(ui.message === 'nopic' && n === 2)) return out;
-  if (ui.recordingNow && (n === 5 || n === 6)) { add(303); return out; }
+  if (ui.recordingNow && (n === 5 || n === 6)) { add(303, 'video'); return out; }
   const sim = JSON.parse(JSON.stringify(s));
   sim.steps[n].status = 'done';
   const r = shotStates(sim, { live: true });
-  function warnFor(x) {
+  function warnFor(x, shot) {
     if (!x || x.state !== NC || x.reason === null) return;
-    if (x.reason === 335) add(n === 3 ? 301 : 302);
-    else if (x.reason === 349) add(n === 9 ? 360 : 348);
-    else add(WARN[x.reason]);
+    if (x.reason === 335) add(n === 3 ? 301 : (n === 9 || n === 10 ? 365 : 302), shot);
+    else if (x.reason === 349) add(n === 9 ? 360 : 348, shot);
+    else if (x.reason === 336) (x.q && x.q.length ? x.q : ['']).forEach(function (q) { add(300, shot, q); });
+    else add(WARN[x.reason], shot);
   }
-  if (n === 2) warnFor(r.step2);
-  if (n === 3) warnFor(r.photoPage);
-  if (n === 5) warnFor(r.v60);
-  if (n === 6) warnFor(r.v90);
-  if (n === 9) { warnFor(r.phoneVideo); warnFor(r.phonePhoto); }
-  if (n === 10) { warnFor(r.galleryPhoto); warnFor(r.galleryVideo); }
+  if (n === 2) warnFor(r.step2, 'step2');
+  if (n === 3) warnFor(r.photoPage, 'photo');
+  if (n === 5) warnFor(r.v60, 'video');
+  if (n === 6) warnFor(r.v90, 'video');
+  if (n === 9) { warnFor(r.phoneVideo, 'video'); warnFor(r.phonePhoto, 'photo'); }
+  if (n === 10) { warnFor(r.galleryPhoto, 'photo'); warnFor(r.galleryVideo, 'video'); }
   return out;
+}
+
+// Строки-причины для показа — каждая один раз.
+export function nextWarnings(s, n, ui) {
+  const out = [];
+  warnItems(s, n, ui).forEach(function (x) { if (out.indexOf(x.line) < 0) out.push(x.line); });
+  return out;
+}
+
+// Набор причин для сравнения с последним показанным предупреждением (Д-22).
+export function nextWarningSet(s, n, ui) {
+  const out = [];
+  warnItems(s, n, ui).forEach(function (x) {
+    const k = x.line + '|' + x.shot + '|' + x.q;
+    if (out.indexOf(k) < 0) out.push(k);
+  });
+  return out.sort();
+}
+
+// Показать ли предупреждение при этом нажатии «Дальше»: причины есть, а предупреждения на шаге
+// ещё не было или с прошлого показа набор причин изменился (раздел 9, пункт 14; Д-22).
+export function warnAgain(lastShown, now) {
+  if (!now || now.length === 0) return false;
+  if (!lastShown) return true;
+  const a = lastShown.slice().sort();
+  const b = now.slice().sort();
+  if (a.length !== b.length) return true;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1200,6 +1296,10 @@ function nr(v) {
 function answer(v, shown) {
   if (v !== null && v !== undefined && v !== '') return v;
   return shown ? T[345] : DASH;
+}
+
+function given(v) {
+  return v !== null && v !== undefined && v !== '';
 }
 
 function oneLine(s) {
@@ -1295,7 +1395,7 @@ function wakeText(st, env) {
 
 // О16 «Галерея», «Другое» или «Ничего» при полученном файле — нужен О22 (7.1, правило 5).
 function o22Asked9(item) {
-  return !!item.file && item.o16 !== null && item.o16 !== undefined && item.o16 !== ans(131);
+  return !!item.file && o16Given(item) && item.o16 !== ans(131);
 }
 
 export function o22Shown9(item) {
@@ -1372,7 +1472,8 @@ export function buildReport(s) {
   function pageBlock(n, noAction, body) {
     const x = steps[n];
     if (x.mark) return [markLine(x.mark)];
-    if (x.status === 'skipped') return [T[161]];
+    // Блок пропущенного шага 2 печатается целиком, если на нём дан ответ О8 или О9 (раздел 5; Д-24).
+    if (x.status === 'skipped' && !(n === 2 && (given(x.o8) || given(x.o9)))) return [T[161]];
     if (x.status === 'notreached') return [T[162]];
     if (noAction && !x.crashed) return [T[162]];
     return body();
@@ -1393,7 +1494,8 @@ export function buildReport(s) {
       line(254, answer(s2.o9, true)),
       line(255, answer(s2.o10, true)),
       line(256, res),
-      line(257, s2.mic === null || s2.mic === undefined ? DASH : (s2.mic ? YES : NO))
+      line(257, s2.mic === null || s2.mic === undefined ? DASH : (s2.mic ? YES : NO)),
+      line(326, s2.status === 'skipped' ? YES : NO)
     ];
   }));
 
