@@ -236,11 +236,10 @@ function measureEnv() {
 // ---------------------------------------------------------------------------
 // Ошибки страницы (И19)
 // ---------------------------------------------------------------------------
+// К каждой ошибке — место: экран, открытый в момент ошибки (Д-44; TXT-CAP-294).
 function addError(text) {
-  const t = L.sanitizeErrorText(text);
-  if (!t || state.errors.indexOf(t) >= 0 || state.errors.length >= 10) return;
-  state.errors.push(t);
-  save();
+  const place = L.errorPlace({ screen: state.screen, step: state.step, recoverStep: state.recoverStep });
+  if (L.pushError(state.errors, place, text)) save();
 }
 
 function errName(e) {
@@ -557,8 +556,11 @@ function dropUrl(url) {
   try { URL.revokeObjectURL(url); } catch (e) { /* нет */ }
 }
 
+// Раздел 9, пункт 23 (Д-44): видео сначала помечается убранным, потом снимается источник —
+// ошибки, которые пришлёт его проигрыватель после этого, этому видео не приписываются.
 function dropMedia(el) {
   if (!el) return;
+  L.markRemoved(el);
   try {
     if (el.tagName === 'VIDEO') { el.pause(); el.removeAttribute('src'); el.load(); } else { el.removeAttribute('src'); }
   } catch (e) { /* нет */ }
@@ -569,6 +571,7 @@ function dropMedia(el) {
 function releaseMedia() {
   if (rt.session) abandonSession();
   rt.media.forEach(function (m) {
+    L.markRemoved(m);
     try {
       if (m.tagName === 'VIDEO') { m.pause(); m.removeAttribute('src'); m.load(); } else { m.removeAttribute('src'); }
     } catch (e) { /* нет */ }
@@ -579,107 +582,11 @@ function releaseMedia() {
   rt.photos = [];
 }
 
-function playedSeconds(v) {
-  let s = 0;
-  try {
-    for (let i = 0; i < v.played.length; i++) s += v.played.end(i) - v.played.start(i);
-  } catch (e) { /* нет */ }
-  return s;
-}
-
-// Длительность по файлу: сразу; если бесконечность или не число — перемотка в конец и ожидание durationchange ≤ 10 с.
-function measureVideo(player, f, onUpdate) {
-  f.fileSeconds = null;
-  f.durationMethod = null;
-  f.playable = null;
-  f.audio = null;
-  f.width = null;
-  f.height = null;
-  let measuring = false;
-  const metaTimer = setTimeout(function () {
-    if (f.durationMethod === null) { f.durationMethod = T[160]; save(); onUpdate(); }
-  }, 10000);
-
-  function setDuration(d, method) {
-    f.fileSeconds = d;
-    f.durationMethod = method;
-    save();
-    onUpdate();
-  }
-
-  player.addEventListener('loadedmetadata', function () {
-    clearTimeout(metaTimer);
-    f.width = player.videoWidth || null;
-    f.height = player.videoHeight || null;
-    audioStatic();
-    const d = player.duration;
-    if (typeof d === 'number' && isFinite(d)) {
-      setDuration(d, T[188]);
-      return;
-    }
-    measuring = true;
-    let done = false;
-    function finish(d2, method) {
-      if (done) return;
-      done = true;
-      player.removeEventListener('durationchange', onDC);
-      clearTimeout(tm);
-      try { player.currentTime = 0; } catch (e) { /* нет */ }
-      measuring = false;
-      setDuration(d2, method);
-    }
-    function onDC() {
-      if (typeof player.duration === 'number' && isFinite(player.duration)) finish(player.duration, T[189]);
-    }
-    const tm = setTimeout(function () { finish(null, T[160]); }, 10000);
-    player.addEventListener('durationchange', onDC);
-    try { player.currentTime = 1e101; } catch (e) { /* нет */ }
-  }, { once: true });
-
-  player.addEventListener('canplay', function () {
-    if (f.playable === null) { f.playable = YES; save(); onUpdate(); }
-  });
-  player.addEventListener('error', function () {
-    f.playable = T[165];
-    if (f.durationMethod === null) { clearTimeout(metaTimer); f.durationMethod = T[160]; }
-    save();
-    onUpdate();
-  });
-
-  // И14: звуковая дорожка — все признаки, какие есть в браузере (решение оркестратора Д-35):
-  // audioTracks — при loadedmetadata и ещё раз после начала проигрывания; mozHasAudio;
-  // webkitAudioDecodedByteCount вместе с webkitVideoDecodedByteCount — во время проигрывания и после,
-  // но не во время перемотки для длительности. Итог — L.audioVerdict; нет ответа — «не сообщает».
-  const seen = { yes: false, no: false };
-  function addAudio(sig) {
-    const s = L.audioSignal(sig);
-    if (s === 'yes') seen.yes = true;
-    if (s === 'no') seen.no = true;
-    const v = L.audioVerdict([seen.yes ? 'yes' : null, seen.no ? 'no' : null]);
-    if (v !== f.audio) { f.audio = v; save(); onUpdate(); }
-  }
-  function tracksCheck() {
-    if (player.audioTracks && typeof player.audioTracks.length === 'number') addAudio({ kind: 'tracks', n: player.audioTracks.length });
-  }
-  function audioStatic() {
-    tracksCheck();
-    if (typeof player.mozHasAudio === 'boolean') addAudio({ kind: 'moz', value: player.mozHasAudio });
-  }
-  player.addEventListener('playing', tracksCheck, { once: true });
-  if (typeof player.webkitAudioDecodedByteCount === 'number') {
-    const check = function () {
-      if (measuring || seen.yes) return;
-      addAudio({
-        kind: 'webkit',
-        audio: player.webkitAudioDecodedByteCount,
-        video: player.webkitVideoDecodedByteCount,
-        played: playedSeconds(player)
-      });
-    };
-    player.addEventListener('timeupdate', check);
-    player.addEventListener('pause', check);
-    player.addEventListener('ended', check);
-  }
+// Длительность по файлу (И12, с проверкой «не может быть» у записи на странице — Д-43),
+// «Воспроизводится» и ошибки проигрывателя (И13, Д-44), звуковая дорожка (И14) — L.measureVideo.
+// owner — объект, который сейчас стоит за шагом или кнопкой: туда идут ошибки убранного видео (FZ-01).
+function measureVideo(player, f, onUpdate, owner) {
+  L.measureVideo(player, f, { update: onUpdate, save: save, owner: owner });
 }
 
 function videoPlayer(url) {
@@ -715,7 +622,7 @@ function photoNodes(f, img, notInReport) {
 
 // Видео из файла (камера телефона, галерея, запасной путь шагов 4–6): плеер, строка TXT-CAP-135, подсказка TXT-CAP-98.
 // notInReport — видео запасного пути: TXT-CAP-324 и TXT-CAP-325 вместо TXT-CAP-108 и TXT-CAP-109.
-function videoFromFile(file, f, area, notInReport, onUpdate) {
+function videoFromFile(file, f, area, notInReport, onUpdate, owner) {
   f.received = file.size > 0 ? YES : T[198];
   f.bytes = file.size;
   f.type = file.type || null;
@@ -730,7 +637,7 @@ function videoFromFile(file, f, area, notInReport, onUpdate) {
     fill(lineEl, nodes);
     if (onUpdate) onUpdate();
   }
-  measureVideo(player, f, update);
+  measureVideo(player, f, update, owner);
   update();
   fill(area, [player, p(T[98], 'hint'), lineEl]);
   return { player: player, url: url };
@@ -827,7 +734,8 @@ function renderStart() {
     p(T[343], 'notice'),
     window.isSecureContext ? null : p(T[28], 'error'),
     storageOk ? null : p(T[29], 'notice'),
-    choice(T[4], [5, 6, 7, 8].map(function (n) { return { label: T[n], value: T[n] }; }),
+    // «iPhone 2» (TXT-CAP-371) — сразу после «iPhone», перед «Android 1» (Д-41).
+    choice(T[4], [5, 371, 6, 7, 8].map(function (n) { return { label: T[n], value: T[n] }; }),
       function () { return run.phone; }, function (v) { run.phone = v; }, refresh),
     p(T[9], 'hint'),
     choice(T[10], [{ label: T[11], value: 'browser' }, { label: T[12], value: 'telegram' }, { label: T[13], value: 'max' }],
@@ -1359,7 +1267,8 @@ function renderVideoStep(n) {
     fill(offerEl, []);
     fill(problemEl, []);
     st.attempts = (st.attempts || 0) + 1;
-    st.file = { received: NO };
+    // Ошибки убранных прежних записей шага переходят в новый объект (FZ-01; TXT-CAP-375).
+    st.file = L.newRecordingFile(st.file);
     st.hiddenCount = 0;
     st.wake = null;
     if (n <= 6) { st.o13s = null; st.o13p = null; st.o13e = null; st.o23 = null; }
@@ -1379,7 +1288,7 @@ function renderVideoStep(n) {
     }
     if (rec.mimeType) state.env.recorderType = rec.mimeType;
     const session = {
-      step: n, attempt: st.attempts, my: token, rec: rec, stream: rt.stream, chunks: [], sizes: [], mutes: 0,
+      step: n, attempt: st.attempts, my: token, rec: rec, stream: rt.stream, chunks: [], sizes: [], times: [], mutes: 0,
       tCall: performance.now(), sysCall: Date.now(), tStart: null, sysStart: null, fallbackStart: false,
       requested: null, error: null, cameraLost: false, endHidden: false,
       wasHidden: false, stoppedWhileHidden: false, finalized: false, abandoned: false, limit: limit,
@@ -1392,12 +1301,16 @@ function renderVideoStep(n) {
     if (session.videoTrack) {
       session.videoTrack.addEventListener('mute', function () { if (!session.finalized) session.mutes += 1; });
     }
-    // Порции по одной секунде (раздел 9, пункт 21): каждая — в памяти вкладки по порядку получения;
-    // размер каждой, в том числе пустой, — числом, чтобы номер порции совпадал с секундой записи (И24).
+    // Порции, запрошенные по одной секунде (раздел 9, пункт 21): каждая — в памяти вкладки по порядку получения.
+    // Размер каждой, в том числе пустой, — числом; время прихода каждой по часам страницы запоминается,
+    // чтобы K в отчёте было секундой прихода наименьшей порции, а не её номером: браузер может
+    // отдавать порции реже раза в секунду (И24; решение оркестратора Д-38).
     rec.ondataavailable = function (e) {
       if (session.finalized) return;
+      const at = performance.now();
       const d = e && e.data;
       session.sizes.push(d && typeof d.size === 'number' ? d.size : 0);
+      session.times.push(at);
       if (d && d.size) session.chunks.push(d);
     };
     rec.onstart = function () {
@@ -1469,7 +1382,7 @@ function renderVideoStep(n) {
 
   function failBeforeStart(name) {
     // Запись не началась: порций нет (И24, И25).
-    st.file = { received: NO, stopReason: 'error', chunks: 0, chunkMinBytes: null, chunkMinAt: null, mutes: 0 };
+    st.file = L.newRecordingFile(st.file, { stopReason: 'error', chunks: 0, chunkEmpty: 0, chunkMinBytes: null, chunkMinAt: null, mutes: 0 });
     st.recording = false;
     mark(n, 'ошибка записи: ' + name, 'событие');
     mark(n, 'запись', 'закончено');
@@ -1539,7 +1452,7 @@ function renderVideoStep(n) {
       if (f.playable === T[165]) nodes.push(p(T[108], 'error'));
       fill(lineEl, nodes);
     }
-    measureVideo(player, f, update);
+    measureVideo(player, f, update, function () { return st.file; });
     update();
     if (n <= 6) {
       fill(qEl, o23Nodes().concat([yesNo(T[99], st, 'o13s'), yesNo(T[100], st, 'o13p'), yesNo(T[101], st, 'o13e')]));
@@ -1691,12 +1604,16 @@ function finalize(session, atT, atSys) {
   else f.stopReason = session.endHidden || session.stoppedWhileHidden ? 'hidden' : 'error';
   f.level = level;
   // И24, И25: только числа — сами порции в журнал не идут. И у записи, брошенной уходом с шага.
-  const cs = L.chunkStats(session.sizes);
+  // K считается в конце записи от окончательной точки отсчёта: start, без него — нажатие,
+  // при позднем start — от него (И12, И24; решение оркестратора Д-38).
+  const cs = L.chunkStats(session.sizes, session.times, L.countOrigin(session.tStart, session.tCall));
   f.chunks = cs.count;
+  f.chunkEmpty = cs.empty; // Д-42: пустые порции (0 байт), в том числе первая и последняя
   f.chunkMinBytes = cs.minBytes;
   f.chunkMinAt = cs.minAt;
   f.mutes = session.mutes;
   session.sizes = [];
+  session.times = [];
   if (session.rec.mimeType) state.env.recorderType = session.rec.mimeType;
   const type = session.rec.mimeType || state.env.chosenType || '';
   let blob = null;
@@ -1800,7 +1717,7 @@ function fileItem(n, item, kind, buttonText) {
     renderAsk();
     fill(o22El, []);
     if (kind === 'video') {
-      const r = videoFromFile(file, item.file, area, false);
+      const r = videoFromFile(file, item.file, area, false, null, function () { return item.file; });
       cur = { el: r.player, url: r.url };
     } else {
       const r = photoFromFile(file, item.file, function (img) {

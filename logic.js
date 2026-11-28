@@ -16,7 +16,7 @@ export const T = {
   6: 'Android 1', // TXT-CAP-06
   7: 'Android 2', // TXT-CAP-07
   8: 'Android 3', // TXT-CAP-08
-  9: 'Если проверяете несколько телефонов с Android, запомните, какой из них «Android 1», какой «Android 2», и каждый раз выбирайте тот же ярлык.', // TXT-CAP-09
+  9: 'Если проверяете несколько телефонов, запомните, какой из них «iPhone», какой «iPhone 2», какой «Android 1», какой «Android 2», и каждый раз выбирайте тот же ярлык.', // TXT-CAP-09 (Д-41)
   10: 'Как вы открыли эту страницу?', // TXT-CAP-10
   11: 'В обычном браузере телефона', // TXT-CAP-11
   12: 'По ссылке из чата Telegram', // TXT-CAP-12
@@ -396,10 +396,16 @@ export const T = {
   357: 'Исход, если всё непроверенное сработает:', // TXT-CAP-357
   358: 'Исход, если ничего непроверенного не сработает:', // TXT-CAP-358
   361: 'Доступ к камере получен на шагах:', // TXT-CAP-361
-  367: 'Порций записи (по одной секунде):', // TXT-CAP-367
-  368: 'Наименьшая порция (без первой и последней):', // TXT-CAP-368
+  367: 'Порций записи (запрошены по одной секунде):', // TXT-CAP-367
+  368: 'Наименьшая непустая порция (без первой и последней):', // TXT-CAP-368 (Д-42)
   369: 'Сколько раз браузер сообщил, что камера заглушена:', // TXT-CAP-369
-  370: 'не считалось' // TXT-CAP-370
+  370: 'не считалось', // TXT-CAP-370
+  371: 'iPhone 2', // TXT-CAP-371 (Д-41)
+  372: 'Пустых порций (0 байт):', // TXT-CAP-372 (Д-42)
+  373: 'Длительность, которую браузер сообщил сразу и страница не приняла:', // TXT-CAP-373 (Д-43)
+  374: 'Ошибка проигрывателя:', // TXT-CAP-374 (Д-44)
+  375: 'Ошибки проигрывателя, которые страница не приписала видео:', // TXT-CAP-375 (Д-44)
+  376: 'Длительность, которую браузер сообщил после перемотки и страница не приняла:' // TXT-CAP-376 (Д-43)
 };
 
 // Значения из колонки «Значения» таблицы «Подписи отчёта», у которых нет своего номера TXT-CAP.
@@ -412,7 +418,26 @@ const V_PERM_MIC = 'микрофон — '; // TXT-CAP-242
 const V_ND = 'да, длительность по файлу не проверена'; // TXT-CAP-287
 // Снимки шагов 9 и 10 в поле TXT-CAP-327 (Д-26): «шаг 9, видео: {причина}» и т. д.
 const V_SHOT = { video: 'видео', photo: 'фото' }; // TXT-CAP-327
+// TXT-CAP-374: когда пришла первая ошибка проигрывателя, из-за которой «Воспроизводится: ошибка» (Д-44).
+const V_WHEN = {
+  seek: 'во время перемотки для длительности',
+  beforeReady: 'до того, как видео стало готово к показу',
+  ready: 'видео было готово к показу, но ещё не включалось',
+  played: 'после того, как видео включали'
+};
+const V_CODE = 'код '; // TXT-CAP-374, TXT-CAP-375
+const V_NO_CODE = 'код не сообщает'; // TXT-CAP-374, TXT-CAP-375
+// TXT-CAP-375: где пришла ошибка, которую страница видео не приписала (Д-44).
+export const V_REMOVED = 'после того, как страница убрала видео из памяти';
+// TXT-CAP-294: место ошибки страницы — экран, открытый в момент ошибки (И19; Д-44).
+const V_PLACE = { start: 'начало', before: 'перед съёмкой', step: 'шаг ', report: 'отчёт' };
 export const REPORT_VALUE_SOURCES = [
+  [374, V_WHEN.seek], [374, V_WHEN.beforeReady], [374, V_WHEN.ready], [374, V_WHEN.played],
+  [374, V_CODE + '{N}, '], [374, V_NO_CODE + ', '], [374, ' · нет'],
+  [375, V_REMOVED], [375, ': ' + V_CODE + '{N}; '], [375, V_NO_CODE], [375, ' · нет'],
+  [294, '«' + V_PLACE.start + '»'], [294, '«' + V_PLACE.before + '»'], [294, '«' + V_PLACE.step + '{N}»'], [294, '«' + V_PLACE.report + '»'],
+  [294, '{место}: {текст}; '],
+  [372, DASH], [373, ' с · ' + DASH], [376, ' с · ' + DASH],
   [327, 'шаг 9, ' + V_SHOT.video + ': '], [327, 'шаг 9, ' + V_SHOT.photo + ': '],
   [327, 'шаг 10, ' + V_SHOT.photo + ': '], [327, 'шаг 10, ' + V_SHOT.video + ': '],
   [259, 'открылась, но я сам ничего не выбрал'],
@@ -486,17 +511,45 @@ export function formatKB(bytes) {
   return formatBytes(Math.floor(tenths / 10)) + ',' + (tenths % 10);
 }
 
+// И24: точка отсчёта записи для секунды прихода порций — та же, что у «Секунд по часам страницы:»
+// (TXT-CAP-268): событие start (в том числе позднее, от которого отсчёт пересчитан, И12),
+// а если его не было — нажатие «Начать запись». tStart — окончательная точка отсчёта записи
+// (при запасном отсчёте она равна времени нажатия) или null; tCall — время нажатия.
+export function countOrigin(tStart, tCall) {
+  if (isNum(tStart)) return tStart;
+  return isNum(tCall) ? tCall : null;
+}
+
+// И24 (решение оркестратора Д-38): секунда прихода порции — время её прихода по часам страницы
+// от точки отсчёта, в секундах, округлённое вверх до целого, но не меньше 1: 14,2 с → 15; 15,0 с → 15;
+// ровно в точке отсчёта или раньше → 1. Разница округляется до микросекунды, чтобы погрешность
+// вычитания дробных миллисекунд не превращала ровно 15,0 с в 16.
+export function chunkSecond(t, origin) {
+  if (!isNum(t) || !isNum(origin)) return null;
+  const ms = Math.round((t - origin) * 1000) / 1000;
+  return Math.max(1, Math.ceil(ms / 1000));
+}
+
 // И24: порции записи (раздел 9, пункт 21). sizes — размеры всех порций в байтах по порядку получения,
-// в том числе пустых. Номер порции (с 1) — секунда записи. Наименьшая — среди порций со 2-й
-// по предпоследнюю; при равных — с меньшим номером; порций меньше трёх — не считается.
-export function chunkStats(sizes) {
+// в том числе пустых; times — время прихода каждой (performance.now() в момент события dataavailable);
+// origin — точка отсчёта записи (countOrigin). empty — число пустых порций (0 байт) по всем порциям,
+// в том числе первой и последней (TXT-CAP-372). Наименьшая — только среди непустых порций со 2-й
+// по предпоследнюю (решение оркестратора Д-42); при равных — пришедшая раньше; порций меньше трёх
+// или непустой среди средних нет — не считается. minAt — K, секунда прихода наименьшей непустой
+// порции (chunkSecond), а не её номер: браузер может отдавать порции реже раза в секунду.
+export function chunkStats(sizes, times, origin) {
   const list = sizes || [];
+  const at = times || [];
+  let empty = 0;
+  for (let i = 0; i < list.length; i++) if (list[i] === 0) empty += 1;
   let minBytes = null;
-  let minAt = null;
+  let minIndex = -1;
   for (let i = 1; i < list.length - 1; i++) {
-    if (minBytes === null || list[i] < minBytes) { minBytes = list[i]; minAt = i + 1; }
+    if (!(list[i] > 0)) continue;
+    if (minBytes === null || list[i] < minBytes) { minBytes = list[i]; minIndex = i; }
   }
-  return { count: list.length, minBytes: minBytes, minAt: minAt };
+  const minAt = minIndex >= 0 ? chunkSecond(at[minIndex], origin) : null;
+  return { count: list.length, empty: empty, minBytes: minBytes, minAt: minAt };
 }
 
 // И14: один признак звуковой дорожки → 'yes', 'no' или null (ответа нет).
@@ -563,6 +616,250 @@ export function durationCondition3(sec, max) {
   if (!isNum(sec)) return T[187];
   const w = wholeSeconds(sec);
   return w <= max && w >= max - 1 ? T[158] : T[159];
+}
+
+// Раздел 9, пункт 22 (решение владельца D-240; решение оркестратора Д-43): длительность по файлу,
+// которой не может быть у записи на странице. Т — большее из секунд по часам страницы и по системным
+// часам телефона; есть одно — оно; нет ни одного — проверки нет. Не может быть — если больше 10 × Т
+// и больше Т + 60 секунд. Сравнения строгие, без округления. Порог — параметр инструмента, допущение плана.
+export const IMPOSSIBLE_TIMES = 10;
+export const IMPOSSIBLE_EXTRA_SECONDS = 60;
+export function impossibleDuration(d, clockSeconds, sysSeconds) {
+  const hasC = isNum(clockSeconds);
+  const hasS = isNum(sysSeconds);
+  if (!isNum(d) || (!hasC && !hasS)) return false;
+  const t = hasC && hasS ? Math.max(clockSeconds, sysSeconds) : (hasC ? clockSeconds : sysSeconds);
+  return d > IMPOSSIBLE_TIMES * t && d > t + IMPOSSIBLE_EXTRA_SECONDS;
+}
+
+// Секунды с одним знаком после запятой (отбрасыванием, как formatSeconds) и пробелами между тысячами:
+// 7 158 338,7 (TXT-CAP-373, TXT-CAP-376).
+export function formatSecondsSpaced(sec) {
+  const tenths = Math.floor(sec * 10 + 1e-7);
+  return formatBytes(Math.floor(tenths / 10)) + ',' + (tenths % 10);
+}
+
+// Видео, которое страница убрала из памяти (раздел 9, пункт 3): уход с шага, «Записать заново», новый файл.
+// Помечается до того, как снят источник; его ошибки видео не приписываются (Д-44).
+const removedPlayers = new WeakSet();
+export function markRemoved(el) {
+  if (el && typeof el === 'object') removedPlayers.add(el);
+}
+export function isRemoved(el) {
+  return !!el && typeof el === 'object' && removedPlayers.has(el);
+}
+
+// FZ-01 (раздел 9, пункт 23; TXT-CAP-375): ошибки убранных видео, пришедшие до замены объекта шага
+// или кнопки, переходят в новый объект — копией списка.
+function carryIgnored(prev) {
+  return prev && Array.isArray(prev.ignoredErrors) ? prev.ignoredErrors.slice() : [];
+}
+
+// Новый объект записи шагов 4–8 («Начать запись», «Записать заново», запись не началась).
+// extra — поля, известные сразу (запись не началась: причина и порции).
+export function newRecordingFile(prev, extra) {
+  const f = { received: NO, ignoredErrors: carryIgnored(prev) };
+  if (extra) Object.keys(extra).forEach(function (k) { f[k] = extra[k]; });
+  return f;
+}
+
+// Сколько ждать loadedmetadata и durationchange после перемотки, мс (И12).
+export const DURATION_WAIT_MS = 10000;
+
+function playedSeconds(v) {
+  let s = 0;
+  try {
+    for (let i = 0; i < v.played.length; i++) s += v.played.end(i) - v.played.start(i);
+  } catch (e) { /* нет */ }
+  return s;
+}
+
+// Измерение видео на проигрывателе (И12, И13, И14). player — элемент video с источником; f — поля файла;
+// h — { update, save, setTimeout, clearTimeout, owner } (таймеры подменяются в тестах); owner — функция,
+// которая возвращает объект, что сейчас стоит за шагом или кнопкой: туда идут ошибки этого проигрывателя
+// после того, как его убрали, — после «Записать заново» и нового файла это уже объект нового видео (FZ-01).
+// Длительность: сразу по loadedmetadata; если бесконечность, не число или — у записи на странице —
+// длительность, которой не может быть (Д-43), — перемотка в конец и ожидание durationchange не дольше
+// 10 с, после перемотки принимается только длительность, которой может быть; затем видео с начала.
+// «Воспроизводится»: «да» — canplay, если поле пустое; «ошибка» — error у неубранного видео, в том числе
+// во время перемотки (тогда перемотка кончается) и после canplay; error у убранного видео — в ignoredErrors (Д-44).
+export function measureVideo(player, f, h) {
+  const later = h.setTimeout || function (fn, ms) { return setTimeout(fn, ms); };
+  const cancel = h.clearTimeout || function (id) { clearTimeout(id); };
+  const save = h.save || function () {};
+  const update = h.update || function () {};
+  f.fileSeconds = null;
+  f.durationMethod = null;
+  f.playable = null;
+  f.audio = null;
+  f.width = null;
+  f.height = null;
+  f.reportedSeconds = null;
+  f.afterSeekRejectedSeconds = null;
+  f.playerError = null;
+  // Ошибки убранных видео этого шага или кнопки, пришедшие до измерения, не стираются (FZ-01).
+  if (!Array.isArray(f.ignoredErrors)) f.ignoredErrors = [];
+  const owner = h.owner || function () { return f; };
+  // Проверка «не может быть» — только у записи на странице: у неё есть секунды записи (раздел 9, пункт 22).
+  const checkable = isNum(f.clockSeconds) || isNum(f.sysSeconds);
+  function impossible(d) {
+    return checkable && impossibleDuration(d, f.clockSeconds, f.sysSeconds);
+  }
+  let measuring = false;
+  let endSeek = null;
+  let canplay = false;
+  let playing = false;
+  const metaTimer = later(function () {
+    if (f.durationMethod === null) { f.durationMethod = T[160]; save(); update(); }
+  }, DURATION_WAIT_MS);
+
+  function setDuration(d, method) {
+    f.fileSeconds = d;
+    f.durationMethod = method;
+    save();
+    update();
+  }
+
+  function seekForDuration() {
+    measuring = true;
+    let done = false;
+    let tm = null;
+    function finish(d2, method) {
+      if (done) return;
+      done = true;
+      player.removeEventListener('durationchange', onDC);
+      cancel(tm);
+      try { player.currentTime = 0; } catch (e) { /* нет */ }
+      measuring = false;
+      endSeek = null;
+      setDuration(d2, method);
+    }
+    function onDC() {
+      const d2 = player.duration;
+      if (!isNum(d2)) return;
+      if (impossible(d2)) { f.afterSeekRejectedSeconds = d2; save(); return; }
+      finish(d2, T[189]);
+    }
+    endSeek = finish;
+    tm = later(function () {
+      const d2 = player.duration;
+      if (isNum(d2) && impossible(d2)) f.afterSeekRejectedSeconds = d2;
+      finish(null, T[160]);
+    }, DURATION_WAIT_MS);
+    player.addEventListener('durationchange', onDC);
+    try { player.currentTime = 1e101; } catch (e) { /* нет */ }
+  }
+
+  player.addEventListener('loadedmetadata', function () {
+    cancel(metaTimer);
+    f.width = player.videoWidth || null;
+    f.height = player.videoHeight || null;
+    audioStatic();
+    const d = player.duration;
+    if (isNum(d) && !impossible(d)) {
+      setDuration(d, T[188]);
+      return;
+    }
+    if (isNum(d)) f.reportedSeconds = d;
+    seekForDuration();
+  }, { once: true });
+
+  player.addEventListener('canplay', function () {
+    canplay = true;
+    if (f.playable === null) { f.playable = YES; save(); update(); }
+  });
+  player.addEventListener('playing', function () { playing = true; });
+  player.addEventListener('error', function () {
+    const code = player.error && isNum(player.error.code) ? player.error.code : null;
+    if (isRemoved(player)) {
+      const cur = owner();
+      const o = cur && typeof cur === 'object' ? cur : f;
+      if (!Array.isArray(o.ignoredErrors)) o.ignoredErrors = [];
+      o.ignoredErrors.push({ where: V_REMOVED, code: code });
+      save();
+      return;
+    }
+    f.playable = T[165];
+    if (!f.playerError) {
+      let when = V_WHEN.played;
+      if (measuring) when = V_WHEN.seek;
+      else if (!canplay) when = V_WHEN.beforeReady;
+      else if (!playing) when = V_WHEN.ready;
+      f.playerError = { code: code, when: when };
+    }
+    if (measuring && endSeek) {
+      endSeek(null, T[160]);
+      return;
+    }
+    if (f.durationMethod === null) { cancel(metaTimer); f.durationMethod = T[160]; }
+    save();
+    update();
+  });
+
+  // И14: звуковая дорожка — все признаки, какие есть в браузере (решение оркестратора Д-35):
+  // audioTracks — при loadedmetadata и ещё раз после начала проигрывания; mozHasAudio;
+  // webkitAudioDecodedByteCount вместе с webkitVideoDecodedByteCount — во время проигрывания и после,
+  // но не во время перемотки для длительности. Итог — audioVerdict; нет ответа — «не сообщает».
+  const seen = { yes: false, no: false };
+  function addAudio(sig) {
+    const s = audioSignal(sig);
+    if (s === 'yes') seen.yes = true;
+    if (s === 'no') seen.no = true;
+    const v = audioVerdict([seen.yes ? 'yes' : null, seen.no ? 'no' : null]);
+    if (v !== f.audio) { f.audio = v; save(); update(); }
+  }
+  function tracksCheck() {
+    if (player.audioTracks && typeof player.audioTracks.length === 'number') addAudio({ kind: 'tracks', n: player.audioTracks.length });
+  }
+  function audioStatic() {
+    tracksCheck();
+    if (typeof player.mozHasAudio === 'boolean') addAudio({ kind: 'moz', value: player.mozHasAudio });
+  }
+  player.addEventListener('playing', tracksCheck, { once: true });
+  if (typeof player.webkitAudioDecodedByteCount === 'number') {
+    const check = function () {
+      if (measuring || seen.yes) return;
+      addAudio({
+        kind: 'webkit',
+        audio: player.webkitAudioDecodedByteCount,
+        video: player.webkitVideoDecodedByteCount,
+        played: playedSeconds(player)
+      });
+    };
+    player.addEventListener('timeupdate', check);
+    player.addEventListener('pause', check);
+    player.addEventListener('ended', check);
+  }
+}
+
+// И19 (Д-44): место ошибки страницы — экран, открытый в момент ошибки. where — { screen, step, recoverStep }.
+// Экран после падения (recover) — о шаге, на котором страница закрылась; «Запуск не получился» (failed) — отчёт.
+export function errorPlace(where) {
+  const w = where || {};
+  if (w.screen === 'before') return V_PLACE.before;
+  if (w.screen === 'step' && isNum(w.step)) return V_PLACE.step + w.step;
+  if (w.screen === 'recover' && isNum(w.recoverStep)) return V_PLACE.step + w.recoverStep;
+  if (w.screen === 'report' || w.screen === 'failed') return V_PLACE.report;
+  return V_PLACE.start;
+}
+
+// И19: ошибка страницы в список — текст без адресов и имён файлов, с местом; повтор и пустое не пишутся;
+// не больше 10. Возвращает true, если записано.
+export const MAX_PAGE_ERRORS = 10;
+export function pushError(list, place, text) {
+  const t = sanitizeErrorText(text);
+  if (!t || list.length >= MAX_PAGE_ERRORS) return false;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (e && typeof e === 'object' && e.place === place && e.text === t) return false;
+  }
+  list.push({ place: place, text: t });
+  return true;
+}
+
+function pageErrorText(e) {
+  if (e && typeof e === 'object') return oneLine(e.place + ': ' + e.text);
+  return oneLine(e); // журнал прежней версии страницы: текст без места
 }
 
 export function perMinuteBytes(bytes, sec) {
@@ -753,7 +1050,8 @@ export function describeUaData(platform, high) {
 // ---------------------------------------------------------------------------
 // Прочее
 // ---------------------------------------------------------------------------
-const PHONE_BASE = { 'iPhone': 1, 'Android 1': 4, 'Android 2': 7, 'Android 3': 10 };
+// Раздел 3; «iPhone 2» — второй iPhone, CAP-13…CAP-15 (решение оркестратора Д-41).
+const PHONE_BASE = { 'iPhone': 1, 'Android 1': 4, 'Android 2': 7, 'Android 3': 10, 'iPhone 2': 13 };
 const OPENED_SHIFT = { browser: 0, telegram: 1, max: 2 };
 
 export function runNumber(phone, opened) {
@@ -1132,7 +1430,8 @@ export function noFileReturned(item) {
 // «сам ничего не снял (не выбрал)» тоже стирается; прочие ответы О16 и О17 остаются.
 export function goodFile(item, n, kind) {
   item.wrongKind = false;
-  item.file = {};
+  // Видео: ошибки убранного прежнего видео переходят в новый объект (FZ-01; TXT-CAP-375).
+  item.file = kind === 'video' ? { ignoredErrors: carryIgnored(item.file) } : {};
   item.o22 = null;
   if (kind === 'video') { item.o13s = null; item.o13p = null; item.o13e = null; } else { item.o11 = null; }
   if (n === 9 && item.o16 === ans(362)) item.o16 = null;
@@ -1448,8 +1747,30 @@ function videoFields(f, kind, limit) {
     if (known) minText = isNum(f.chunkMinBytes) && isNum(f.chunkMinAt) ? formatKB(f.chunkMinBytes) + ' КБ на ' + f.chunkMinAt + '-й секунде' : T[370];
     out[368] = line(368, minText);
     out[369] = line(369, f && isNum(f.mutes) ? String(f.mutes) : DASH);
+    // Д-42: пустые порции — «—» в тех же случаях, что у TXT-CAP-367.
+    out[372] = line(372, known && isNum(f.chunkEmpty) ? String(f.chunkEmpty) : DASH);
+    // Д-43: длительность, которую страница не приняла, — сразу и после перемотки; справочно, ничего по ней не считается.
+    out[373] = line(373, hasData && isNum(f.reportedSeconds) ? formatSecondsSpaced(f.reportedSeconds) + ' с' : DASH);
+    out[376] = line(376, hasData && isNum(f.afterSeekRejectedSeconds) ? formatSecondsSpaced(f.afterSeekRejectedSeconds) + ' с' : DASH);
   }
+  // Д-44: первая ошибка проигрывателя, из-за которой «Воспроизводится: ошибка», и ошибки убранного видео.
+  out[374] = line(374, hasData ? playerErrorText(f.playerError) : DASH);
+  out[375] = line(375, hasData ? ignoredErrorsText(f.ignoredErrors) : DASH);
   return out;
+}
+
+function codeText(code) {
+  return isNum(code) ? V_CODE + code : V_NO_CODE;
+}
+
+function playerErrorText(e) {
+  if (!e || typeof e !== 'object') return NO;
+  return codeText(e.code) + ', ' + e.when;
+}
+
+function ignoredErrorsText(list) {
+  if (!list || !list.length) return NO;
+  return list.map(function (e) { return e.where + ': ' + codeText(e.code); }).join('; ');
 }
 
 // Поля выводятся в порядке номеров таблицы «Подписи отчёта».
@@ -1684,7 +2005,7 @@ export function buildReport(s) {
     ? crashes.length + ' раз, незаконченный шаг: ' + crashes.map(function (n) { return stepTitle(n, run.opened); }).join(', ')
     : NO));
   out.push(line(293, String(s.reloads || 0)));
-  out.push(line(294, s.errors && s.errors.length ? s.errors.map(oneLine).join('; ') : NO));
+  out.push(line(294, s.errors && s.errors.length ? s.errors.map(pageErrorText).join('; ') : NO));
   out.push(line(295, typed(s.final.quality)));
   out.push(line(296, typed(s.final.note)));
   out.push(line(297, run.failed ? (oneLine(run.failedReason || '') || DASH) : DASH));
