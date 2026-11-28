@@ -395,7 +395,11 @@ export const T = {
   353: 'Просьба не гасить экран на этой записи:', // TXT-CAP-353
   357: 'Исход, если всё непроверенное сработает:', // TXT-CAP-357
   358: 'Исход, если ничего непроверенного не сработает:', // TXT-CAP-358
-  361: 'Доступ к камере получен на шагах:' // TXT-CAP-361
+  361: 'Доступ к камере получен на шагах:', // TXT-CAP-361
+  367: 'Порций записи (по одной секунде):', // TXT-CAP-367
+  368: 'Наименьшая порция (без первой и последней):', // TXT-CAP-368
+  369: 'Сколько раз браузер сообщил, что камера заглушена:', // TXT-CAP-369
+  370: 'не считалось' // TXT-CAP-370
 };
 
 // Значения из колонки «Значения» таблицы «Подписи отчёта», у которых нет своего номера TXT-CAP.
@@ -422,7 +426,8 @@ export const REPORT_VALUE_SOURCES = [
   [270, ' с, получена: '], [270, ', целых секунд: '], [270, ', в пределе шага: '],
   [273, 'около '], [287, V_ND], [289, DASH], [292, ' раз, незаконченный шаг: '], [297, DASH],
   [327, 'шаг {N}: {причина}; '], [327, DASH],
-  [328, DASH], [329, DASH], [330, DASH], [351, DASH], [357, DASH], [358, DASH]
+  [328, DASH], [329, DASH], [330, DASH], [351, DASH], [357, DASH], [358, DASH],
+  [367, DASH], [368, ' КБ на '], [368, '-й секунде'], [368, DASH], [369, DASH]
 ];
 
 // ---------------------------------------------------------------------------
@@ -440,6 +445,16 @@ export const STEP_LIMITS = { 5: 60, 6: 90 };
 export const NO_PICTURE_SECONDS = 5;
 // Через сколько секунд без события start отсчёт идёт от нажатия (раздел 9, пункт 13).
 export const START_EVENT_WAIT_SECONDS = 1.5;
+// Длина порции записи на странице, мс (раздел 9, пункт 21; E-187; D-238).
+export const CHUNK_MS = 1000;
+// Раздел 9, пункт 21: файл собирается из порций после события stop. Если запись уже inactive
+// (браузер остановил её сам — например, при ошибке он сначала ставит inactive, потом шлёт
+// error, последнюю порцию и stop), страница не собирает файл сразу, а ждёт stop;
+// запасной таймер — на случай, если stop не придёт.
+export const STOP_EVENT_WAIT_SECONDS = 2;
+export function endAction(recorderState) {
+  return recorderState === 'recording' || recorderState === 'paused' ? 'stop' : 'wait';
+}
 
 export function bytesToMB(bytes) {
   return bytes / MIB;
@@ -463,6 +478,53 @@ export function formatBytes(n) {
     out += s.charAt(i);
   }
   return out;
+}
+
+// КБ (1 КБ = 1024 байта) с одним знаком после запятой, обычное округление, разряды через пробел (И24).
+export function formatKB(bytes) {
+  const tenths = Math.round(bytes / 1024 * 10);
+  return formatBytes(Math.floor(tenths / 10)) + ',' + (tenths % 10);
+}
+
+// И24: порции записи (раздел 9, пункт 21). sizes — размеры всех порций в байтах по порядку получения,
+// в том числе пустых. Номер порции (с 1) — секунда записи. Наименьшая — среди порций со 2-й
+// по предпоследнюю; при равных — с меньшим номером; порций меньше трёх — не считается.
+export function chunkStats(sizes) {
+  const list = sizes || [];
+  let minBytes = null;
+  let minAt = null;
+  for (let i = 1; i < list.length - 1; i++) {
+    if (minBytes === null || list[i] < minBytes) { minBytes = list[i]; minAt = i + 1; }
+  }
+  return { count: list.length, minBytes: minBytes, minAt: minAt };
+}
+
+// И14: один признак звуковой дорожки → 'yes', 'no' или null (ответа нет).
+// tracks — video.audioTracks.length: ноль ответом «нет» не считается (CAP-01).
+// moz — mozHasAudio. webkit — webkitAudioDecodedByteCount (audio) и webkitVideoDecodedByteCount (video)
+// в один момент и сколько секунд проиграно (played): ноль звука — «нет», только если проиграно
+// не меньше 2 секунд, а счётчик картинки больше нуля.
+export const AUDIO_PLAYED_SECONDS = 2;
+export function audioSignal(o) {
+  if (!o) return null;
+  if (o.kind === 'tracks') return isNum(o.n) && o.n > 0 ? 'yes' : null;
+  if (o.kind === 'moz') return o.value === true ? 'yes' : (o.value === false ? 'no' : null);
+  if (o.kind === 'webkit') {
+    if (!isNum(o.audio)) return null;
+    if (o.audio > 0) return 'yes';
+    if (isNum(o.video) && o.video > 0 && isNum(o.played) && o.played >= AUDIO_PLAYED_SECONDS) return 'no';
+    return null;
+  }
+  return null;
+}
+
+// И14: итог по всем признакам: хоть один «есть» — «есть»; иначе хоть один «нет» — «нет»;
+// иначе null — в отчёте «не сообщает».
+export function audioVerdict(signals) {
+  const list = signals || [];
+  if (list.indexOf('yes') >= 0) return T[197];
+  if (list.indexOf('no') >= 0) return T[159];
+  return null;
 }
 
 // Секунды с одним знаком после запятой, отбрасыванием (не вверх):
@@ -1376,7 +1438,17 @@ function videoFields(f, kind, limit) {
   out[274] = line(274, hasData ? (isNum(f.width) && isNum(f.height) && f.width > 0 ? f.width + ' × ' + f.height : T[160]) : DASH);
   out[275] = line(275, hasData ? nr(f.playable) : DASH);
   out[276] = line(276, hasData ? nr(f.audio) : DASH);
-  if (kind === 'page') out[277] = line(277, hasData ? (isNum(f.level) ? String(f.level) : T[160]) : DASH);
+  if (kind === 'page') {
+    out[277] = line(277, hasData ? (isNum(f.level) ? String(f.level) : T[160]) : DASH);
+    // И24, И25: справочные поля о порциях и заглушении камеры; «—» — сведений нет (страница
+    // закрылась, пока шла запись). У записи, брошенной уходом с шага, — числа (раздел 9, пункт 21).
+    const known = !!f && isNum(f.chunks);
+    out[367] = line(367, known ? String(f.chunks) : DASH);
+    let minText = DASH;
+    if (known) minText = isNum(f.chunkMinBytes) && isNum(f.chunkMinAt) ? formatKB(f.chunkMinBytes) + ' КБ на ' + f.chunkMinAt + '-й секунде' : T[370];
+    out[368] = line(368, minText);
+    out[369] = line(369, f && isNum(f.mutes) ? String(f.mutes) : DASH);
+  }
   return out;
 }
 

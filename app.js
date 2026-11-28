@@ -646,29 +646,39 @@ function measureVideo(player, f, onUpdate) {
     onUpdate();
   });
 
-  // И14: звуковая дорожка — audioTracks, mozHasAudio, webkitAudioDecodedByteCount после проигрывания.
+  // И14: звуковая дорожка — все признаки, какие есть в браузере (решение оркестратора Д-35):
+  // audioTracks — при loadedmetadata и ещё раз после начала проигрывания; mozHasAudio;
+  // webkitAudioDecodedByteCount вместе с webkitVideoDecodedByteCount — во время проигрывания и после,
+  // но не во время перемотки для длительности. Итог — L.audioVerdict; нет ответа — «не сообщает».
+  const seen = { yes: false, no: false };
+  function addAudio(sig) {
+    const s = L.audioSignal(sig);
+    if (s === 'yes') seen.yes = true;
+    if (s === 'no') seen.no = true;
+    const v = L.audioVerdict([seen.yes ? 'yes' : null, seen.no ? 'no' : null]);
+    if (v !== f.audio) { f.audio = v; save(); onUpdate(); }
+  }
+  function tracksCheck() {
+    if (player.audioTracks && typeof player.audioTracks.length === 'number') addAudio({ kind: 'tracks', n: player.audioTracks.length });
+  }
   function audioStatic() {
-    if (player.audioTracks && typeof player.audioTracks.length === 'number') {
-      f.audio = player.audioTracks.length > 0 ? T[197] : NO;
-      save();
-      return;
-    }
-    if (typeof player.mozHasAudio === 'boolean') {
-      f.audio = player.mozHasAudio ? T[197] : NO;
-      save();
-      return;
-    }
-    if (typeof player.webkitAudioDecodedByteCount === 'number') {
-      const check = function () {
-        if (measuring || f.audio !== null) return;
-        if (player.webkitAudioDecodedByteCount > 0) f.audio = T[197];
-        else if (playedSeconds(player) >= 2) f.audio = NO;
-        if (f.audio !== null) { save(); onUpdate(); }
-      };
-      player.addEventListener('timeupdate', check);
-      player.addEventListener('pause', check);
-      player.addEventListener('ended', check);
-    }
+    tracksCheck();
+    if (typeof player.mozHasAudio === 'boolean') addAudio({ kind: 'moz', value: player.mozHasAudio });
+  }
+  player.addEventListener('playing', tracksCheck, { once: true });
+  if (typeof player.webkitAudioDecodedByteCount === 'number') {
+    const check = function () {
+      if (measuring || seen.yes) return;
+      addAudio({
+        kind: 'webkit',
+        audio: player.webkitAudioDecodedByteCount,
+        video: player.webkitVideoDecodedByteCount,
+        played: playedSeconds(player)
+      });
+    };
+    player.addEventListener('timeupdate', check);
+    player.addEventListener('pause', check);
+    player.addEventListener('ended', check);
   }
 }
 
@@ -1369,16 +1379,27 @@ function renderVideoStep(n) {
     }
     if (rec.mimeType) state.env.recorderType = rec.mimeType;
     const session = {
-      step: n, attempt: st.attempts, my: token, rec: rec, stream: rt.stream, chunks: [],
+      step: n, attempt: st.attempts, my: token, rec: rec, stream: rt.stream, chunks: [], sizes: [], mutes: 0,
       tCall: performance.now(), sysCall: Date.now(), tStart: null, sysStart: null, fallbackStart: false,
       requested: null, error: null, cameraLost: false, endHidden: false,
       wasHidden: false, stoppedWhileHidden: false, finalized: false, abandoned: false, limit: limit,
       videoTrack: rt.stream.getVideoTracks()[0] || null, camSnapshot: null, level: startLevel(rt.stream),
-      sentinels: [], limitTimer: null, counterTimer: null, startCheck: null, onFinal: onFinal
+      sentinels: [], limitTimer: null, counterTimer: null, startCheck: null, stopWait: null, onFinal: onFinal
     };
     rt.session = session;
     wakeRequest(session);
-    rec.ondataavailable = function (e) { if (e.data && e.data.size) session.chunks.push(e.data); };
+    // И25: сообщения браузера о заглушённой видеодорожке — от нажатия «Начать запись» до конца записи.
+    if (session.videoTrack) {
+      session.videoTrack.addEventListener('mute', function () { if (!session.finalized) session.mutes += 1; });
+    }
+    // Порции по одной секунде (раздел 9, пункт 21): каждая — в памяти вкладки по порядку получения;
+    // размер каждой, в том числе пустой, — числом, чтобы номер порции совпадал с секундой записи (И24).
+    rec.ondataavailable = function (e) {
+      if (session.finalized) return;
+      const d = e && e.data;
+      session.sizes.push(d && typeof d.size === 'number' ? d.size : 0);
+      if (d && d.size) session.chunks.push(d);
+    };
     rec.onstart = function () {
       begin(session, performance.now(), Date.now(), true);
       if (rec.mimeType) { state.env.recorderType = rec.mimeType; save(); }
@@ -1390,14 +1411,15 @@ function renderVideoStep(n) {
       if (session.abandoned) return; // запись брошена уходом с шага — остановлена кнопкой, а не ошибкой
       session.error = name;
       session.endHidden = document.visibilityState === 'hidden';
-      try { if (rec.state !== 'inactive') rec.stop(); else finalize(session); } catch (e) { finalize(session); }
+      endOrAwaitStop(session);
     };
     rec.onstop = function () {
       if (!session.requested && !session.error && !session.cameraLost) session.endHidden = document.visibilityState === 'hidden';
       finalize(session);
     };
     try {
-      rec.start();
+      // Порциями по 1000 мс — обход ошибки Safari с записью video/mp4 одним куском (E-187; D-238; раздел 9, пункт 21).
+      rec.start(L.CHUNK_MS);
     } catch (e) {
       session.error = errName(e);
       mark(n, 'ошибка записи: ' + session.error, 'событие');
@@ -1446,7 +1468,8 @@ function renderVideoStep(n) {
   }
 
   function failBeforeStart(name) {
-    st.file = { received: NO, stopReason: 'error' };
+    // Запись не началась: порций нет (И24, И25).
+    st.file = { received: NO, stopReason: 'error', chunks: 0, chunkMinBytes: null, chunkMinAt: null, mutes: 0 };
     st.recording = false;
     mark(n, 'ошибка записи: ' + name, 'событие');
     mark(n, 'запись', 'закончено');
@@ -1586,12 +1609,27 @@ function releaseSentinel(sentinel) {
 function requestStop(session, reason) {
   if (session.requested || session.finalized) return;
   session.requested = reason;
-  try {
-    if (session.rec.state !== 'inactive') session.rec.stop();
-    else finalize(session);
-  } catch (e) {
-    finalize(session);
+  endOrAwaitStop(session);
+}
+
+// Раздел 9, пункт 21: файл собирается из порций после события stop. Запись идёт — остановить её;
+// уже inactive (браузер остановил её сам, последняя порция и stop ещё в пути) — ждать stop,
+// а если он не придёт за L.STOP_EVENT_WAIT_SECONDS — собрать из того, что пришло.
+function endOrAwaitStop(session) {
+  if (session.finalized) return;
+  let state;
+  try { state = session.rec.state; } catch (e) { state = undefined; }
+  if (L.endAction(state) === 'stop') {
+    try { session.rec.stop(); } catch (e) { finalize(session); } // stop() не удался — события stop не будет
+    return;
   }
+  if (session.stopWait) return;
+  // Если stop так и не пришёл, часы записи кончаются в момент, когда запись оказалась inactive, а не после ожидания.
+  const waitT = performance.now();
+  const waitSys = Date.now();
+  session.stopWait = setTimeout(function () {
+    if (!session.finalized) finalize(session, waitT, waitSys);
+  }, L.STOP_EVENT_WAIT_SECONDS * 1000);
 }
 
 // Камера погасла во время записи на шагах 4–6: страница останавливает запись сама.
@@ -1600,12 +1638,7 @@ function cameraLost(session) {
   session.cameraLost = true;
   session.endHidden = document.visibilityState === 'hidden';
   mark(session.step, 'камера погасла во время записи, запись остановлена', 'событие');
-  try {
-    if (session.rec.state !== 'inactive') session.rec.stop();
-    else finalize(session);
-  } catch (e) {
-    finalize(session);
-  }
+  endOrAwaitStop(session);
 }
 
 // Уход с шага во время записи: запись останавливается («кнопкой», И12), а её камера выключается сразу,
@@ -1629,14 +1662,15 @@ function trackState(track) {
 }
 
 // Окончание записи: часы от start до stop (обе — страницы и системные), остановка дорожек (раздел 9, пункт 12), измерение.
-function finalize(session) {
+function finalize(session, atT, atSys) {
   if (session.finalized) return;
   session.finalized = true;
-  const tStop = performance.now();
-  const sysStop = Date.now();
+  const tStop = typeof atT === 'number' ? atT : performance.now();
+  const sysStop = typeof atSys === 'number' ? atSys : Date.now();
   clearTimeout(session.limitTimer);
   clearInterval(session.counterTimer);
   clearTimeout(session.startCheck);
+  clearTimeout(session.stopWait);
   session.sentinels.forEach(releaseSentinel);
   session.sentinels = [];
   if (document.visibilityState === 'hidden' && !session.requested) session.endHidden = true;
@@ -1656,6 +1690,13 @@ function finalize(session) {
   if (session.requested && !session.error && !session.cameraLost) f.stopReason = session.requested;
   else f.stopReason = session.endHidden || session.stoppedWhileHidden ? 'hidden' : 'error';
   f.level = level;
+  // И24, И25: только числа — сами порции в журнал не идут. И у записи, брошенной уходом с шага.
+  const cs = L.chunkStats(session.sizes);
+  f.chunks = cs.count;
+  f.chunkMinBytes = cs.minBytes;
+  f.chunkMinAt = cs.minAt;
+  f.mutes = session.mutes;
+  session.sizes = [];
   if (session.rec.mimeType) state.env.recorderType = session.rec.mimeType;
   const type = session.rec.mimeType || state.env.chosenType || '';
   let blob = null;
